@@ -53,7 +53,7 @@ class ClassRDDSpec extends BaseOrientDbFlatSpec {
   override def afterAll(): Unit = {
     sparkContext.stop()
   }
-
+  
   "A OrientClassRDD" should "allow to read an Orient Class as Array of OrientDocument" in {
     val result = sparkContext.orientQuery("class_test").collect()
     result should have length NumInsertLoop

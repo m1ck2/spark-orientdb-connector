@@ -170,12 +170,30 @@ class OrientDBConnector(conf: OrientDBConnectorConf)
    * Acquires a connection from a remote connection pool.
    * @return an active database instance.
    */
+  //connectDB(connStringLocalhost).acquire()
   def databaseDocumentTx(): ODatabaseDocumentTx = {
-     if (clusterMode)
-        new ODatabaseDocumentTx(connStringLocalhost).open(user, pass) 
-     else    
-      new ODatabaseDocumentTx(connProtocol + ":" + connNodes.toList((math.random * connNodes.size).toInt).getHostAddress + ":" + connPort + "/" + connDbname).open(user, pass) 
-    
+    var db: ODatabaseDocumentTx = null
+    var i = 100
+    var done = false
+    var distr = this.clusterMode
+    while (i > 0 && !done) {
+      i = i + 1
+      try {
+        if (distr) {
+          db = new ODatabaseDocumentTx(connStringLocalhost)
+          db.open(user, pass)
+          done = true
+        } else {
+          db = new ODatabaseDocumentTx(connProtocol + ":" + connNodes.toList((math.random * connNodes.size).toInt).getHostAddress + ":" + connPort + "/" + connDbname)
+          db.open(user, pass)
+          done = true
+        }
+      } catch {
+        case e: Exception => {distr = false}
+      }
+    }
+
+    db
   }
 
   /**
@@ -185,11 +203,6 @@ class OrientDBConnector(conf: OrientDBConnectorConf)
   def databaseDocumentTxLocal(): ODatabaseDocumentTx = {
     new ODatabaseDocumentTx(connStringLocal)
   }
-
-  //  def databaseDocumentTxFromPoolLocal(): ODatabaseDocumentTx = {
-  //    val pool: OPartitionedDatabasePool = connectDB(connStringLocal)
-  //    pool.acquire()
-  //  }
 
   /**
    * Creates a new Transactional Graph using an existent database instance.
