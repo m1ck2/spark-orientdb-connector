@@ -1,7 +1,7 @@
 lazy val commonSettings = Seq(
   organization := "com.metreta",
-  version := "v1.4-2.10",
-  scalaVersion := "2.10.5",
+  version := "v1.3-2.11",
+  scalaVersion := "2.11.5",
   fork:= true,
   libraryDependencies ++= Seq(
     "com.orientechnologies" % "orientdb-core" % "2.1.9",
@@ -9,9 +9,9 @@ lazy val commonSettings = Seq(
     "com.orientechnologies" % "orientdb-jdbc" % "2.1.9",
     "com.orientechnologies" % "orientdb-graphdb" % "2.1.9",
     "com.orientechnologies" % "orientdb-distributed" % "2.1.9",
-    "org.scalatest" % "scalatest_2.10" % "2.2.4",
-    "org.apache.spark" % "spark-core_2.10" % "1.4.1",
-    "org.apache.spark" % "spark-graphx_2.10" % "1.4.1",
+    "org.scalatest" % "scalatest_2.11" % "2.2.4",
+    "org.apache.spark" % "spark-core_2.11" % "1.3.1",
+    "org.apache.spark" % "spark-graphx_2.11" % "1.3.1",
     "com.tinkerpop.blueprints" % "blueprints-core" % "2.6.0"
     ),
     externalResolvers := Seq(DefaultMavenRepository)
