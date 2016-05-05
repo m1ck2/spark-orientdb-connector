@@ -10,8 +10,8 @@ lazy val commonSettings = Seq(
     "com.orientechnologies" % "orientdb-graphdb" % "2.1.2",
     "com.orientechnologies" % "orientdb-distributed" % "2.1.2",
     "org.scalatest" % "scalatest_2.10" % "2.2.4",
-    "org.apache.spark" % "spark-core_2.10" % "1.4.0",
-    "org.apache.spark" % "spark-graphx_2.10" % "1.4.0",
+    "org.apache.spark" % "spark-core_2.10" % "1.6.0",
+    "org.apache.spark" % "spark-graphx_2.10" % "1.6.0",
     "com.tinkerpop.blueprints" % "blueprints-core" % "2.6.0"
     ),
     externalResolvers := Seq(DefaultMavenRepository),
