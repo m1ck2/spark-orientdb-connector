@@ -39,10 +39,11 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
   /**
    * @param from: orientDB class name
    * @param where: filter
+   * @param limit: query limit for each cluster
    * @param connector
    * @return a classRDD
    */
-  def orientQuery(from: String, where: String = "")(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) = new OrientClassRDD[OrientDocument](sc, connector, from, where)
+  def orientQuery(from: String, columns: String = "", where: String = "", limit: String = "", opts: String = "")(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) = new OrientClassRDD[OrientDocument](sc, connector, from, columns, where, limit, opts)
 
   /**
    * Creates a [[org.apache.spark.graphx.Graph]] starting by traversing an orientDB class.
@@ -51,9 +52,9 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
    * @param connector
    * @return a graphRDD
    */
-  def traverseGraph(from: String, depth: Int)(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) = {
+  def traverseGraph(from: String, columns: String = "", depth: Int)(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) = {
 
-    val classRDD = new OrientClassRDD[OrientDocument](sc, connector, from, "", Some(depth))
+    val classRDD = new OrientClassRDD[OrientDocument](sc, connector, from, columns,  "", "", "", Some(depth))
 
     val edgeRDD = classRDD.filter {
       case e =>
@@ -108,7 +109,8 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
     val vertexRDDList = vertexClassRDDList.map(classRDD => classRDD.map(orientDocument => (getVertexIdFromString(orientDocument.rid), orientDocument)))
 
     //edge RDD list
-    val edgeRDDList = edgeClassRDDList.map(classRDD => classRDD.map(orientDocument => Edge(getVertexIdFromString(orientDocument.columnValues.get(out).toString()), getVertexIdFromString(orientDocument.columnValues.get(in).toString()), orientDocument)))
+    //val edgeRDDList = edgeClassRDDList.map(classRDD => classRDD.map(orientDocument => Edge(getVertexIdFromString(orientDocument.columnValues.get(out).toString()), getVertexIdFromString(orientDocument.columnValues.get(in).toString()), orientDocument)))
+    val edgeRDDList = edgeClassRDDList.map(classRDD => classRDD.map(orientDocument => Edge(getVertexIdFromString(orientDocument.getAs[ORecordId]("out").toString), getVertexIdFromString(orientDocument.getAs[ORecordId]("in").toString), orientDocument)))
 
     //union 
     //VertexRDD merge
@@ -172,7 +174,7 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
     case _ => false
   }
   /**
-   * Define the [[com.orientechnologies.orient.core.metadata.schema.OClass]] parameter nature
+   * Defines the [[com.orientechnologies.orient.core.metadata.schema.OClass]] parameter nature
    * @param klass
    * @param dbGraph
    * @return true if the klass param is edge
@@ -183,7 +185,7 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
   }
 
   /**
-   * Transform a [[com.orientechnologies.orient.core.id.ORID]] in a Long
+   * Transforms a [[com.orientechnologies.orient.core.id.ORID]] in a Long
    * @param rid
    * @return the unique Long value linked to the the given param
    */

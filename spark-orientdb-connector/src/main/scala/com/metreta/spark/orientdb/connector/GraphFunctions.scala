@@ -20,6 +20,9 @@ import com.orientechnologies.orient.core.sql.OCommandSQL
 import java.text.SimpleDateFormat
 import org.apache.commons.codec.binary.Base64
 import com.tinkerpop.blueprints.impls.orient.OrientVertex
+import com.orientechnologies.orient.core.storage.ORecordDuplicatedException
+import com.orientechnologies.orient.server.distributed.task.ODistributedRecordLockedException
+import com.orientechnologies.orient.core.db.OPartitionedDatabasePool
 
 /** Provides OrientDB graph-oriented function on [[org.apache.spark.graphx.Graph]] */
 class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging {
@@ -31,24 +34,30 @@ class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging
   def saveGraphToOrient()(implicit connector: OrientDBConnector = OrientDBConnector(graph.vertices.sparkContext.getConf)): Unit = {
 
     var ograph: OrientGraph = null
-    val vertices = graph.vertices.map { vert =>
-      //println(vert +  " " + vert._1 + " " + vert._2 )
+    
+    val vertices = graph.vertices.mapPartitions(verts => {
       ograph = connector.databaseGraphTx()
-      val myVClass = getObjClass(vert._2)
-      val orientVertex = ograph.addVertex(s"class:$myVClass", toMap(vert._2))
-      connector.commit(ograph)
-      (vert._1, orientVertex.getId.toString())
-
-    }
-      .reduceByKey(_ + _)
-
+      verts.map(
+        vert => {
+          val myVClass = getObjClass(vert._2)
+          val orientVertex = ograph.addVertex(s"class:$myVClass", toMap(vert._2))
+          connector.commit(ograph)
+          (vert._1, orientVertex.getId.toString())
+        }
+      )
+    }).reduceByKey(_ + _)
+    vertices.persist()
+    
     val mappedEdges = graph.edges.map { edge => (edge.srcId, (edge.dstId, edge.attr)) }
       .join { vertices }.map { case (idf, ((idt, attr), vf)) => (idt, ((idf, vf), attr)) }
       .join { vertices }.map { case (idt, (((idf, vf), attr), vt)) => (vf, vt, attr) }
 
-    val edges = mappedEdges.map {
-      case (vertexFrom, vertexTo, attr) =>
-        ograph = connector.databaseGraphTx()
+    vertices.unpersist()
+    mappedEdges.persist()
+    
+    mappedEdges.foreachPartition(edp => {
+      ograph = connector.databaseGraphTx()
+      edp.foreach({ case (vertexFrom, vertexTo, attr) =>
         val from = ograph.getVertex(vertexFrom)
         val to = ograph.getVertex(vertexTo)
         var retry = 0
@@ -62,25 +71,30 @@ class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging
               case (key, value) =>
                 e.setProperty(key, value)
             }
-
-            // ograph.commit()
             connector.commit(ograph)
             done = true
-
           } catch {
             case e: OConcurrentModificationException =>
               from.reload()
               to.reload()
           }
-
         }
-    }
-    println("Saved to OrientDB: " + vertices.count() + " vertices and " + edges.count() + " edges")
+      })
+    })
   }
 
   /**
    * Converts the instance of [[org.apache.spark.graphx.Graph]] to a [[com.tinkerpop.blueprints.impls.orient.OrientGraph]] instance
    * and upserts it into the Orient Database defined in the [[org.apache.spark.SparkContext]].
+   * <p>
+   * GraphX structure
+   * <ul>
+   * <li>Vertices: class MyOrientClass(upsertWhereProp: Any, otherProps .... ), meaning that Vertices 
+   * will be upserted on MyOrientClass where 'upsertWhereProp' = Any
+   * <li>Edges: class MyEdgeContainer(myClass: String, classFrom: String, propFrom: Any, classTo: String, propTo: Any),
+   * meaning that Edges will be created in 'myClass' from vertex in 'classFrom' with 'propFrom' = Any to 
+   * vertex in 'classTo' with 'propTo' = Any
+   * </ul>
    */
 
   def upsertGraphToOrient()(implicit connector: OrientDBConnector = OrientDBConnector(graph.vertices.sparkContext.getConf)): Unit = {
@@ -95,18 +109,20 @@ class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging
 
     graph.vertices
       .foreachPartition(part => {
+        val pool: OPartitionedDatabasePool = connector.pool()
         part.foreach {
           case v =>
             if (v._2 != null) {
 
-              val fromFirstField = v._2.getClass().getDeclaredFields.apply(0)
-              fromFirstField.setAccessible(true)
+              val vertFirstField = v._2.getClass().getDeclaredFields.apply(0)
+              vertFirstField.setAccessible(true)
 
-              val fromQuery = "UPDATE " + getObjClass(v._2) + "  " + getInsertString(v._2) +
-                " upsert return after @rid where " + fromFirstField.getName + " = " + fromFirstField.get(v._2)
-              val session = connector.databaseDocumentTx()
+              val vertQuery = "UPDATE " + getObjClass(v._2) + "  " + getInsertString(v._2) +
+                " upsert return after @rid where " + vertFirstField.getName + " = " + vertFirstField.get(v._2)
+              val session = //connector.databaseDocumentTx()
+                pool.acquire()
               try {
-                session.command(new OCommandSQL(fromQuery)).execute().asInstanceOf[java.util.ArrayList[Any]]
+                session.command(new OCommandSQL(vertQuery)).execute().asInstanceOf[java.util.ArrayList[Any]]
                 session.commit()
 
               } catch {
@@ -116,7 +132,7 @@ class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging
                   e.printStackTrace()
                 }
               } finally {
-                session.release()
+                //session.release()
                 session.close()
               }
             } else {
@@ -128,9 +144,11 @@ class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging
 
     graph.edges
       .foreachPartition(part => {
+        val pool: OPartitionedDatabasePool = connector.pool()
         part.foreach {
           case edge =>
-            val session = connector.databaseDocumentTx()
+            val session = //connector.databaseDocumentTx()
+              pool.acquire()
             val attr = toMap(edge.attr)
             val to = edge.dstId.toLong
             val from = edge.srcId.toLong
@@ -160,12 +178,29 @@ class GraphFunctions[V, E](graph: Graph[V, E]) extends Serializable with Logging
                   val edge_orid = session.command(new OCommandSQL(edgeQuery)).execute().asInstanceOf[java.util.ArrayList[Any]]
                   session.commit()
                   retry = false
-                  session.release()
                   session.close()
                 } catch {
-                  case e: Exception => {
+                  
+                  // In case of unique index on edges
+                  case e: OTransactionException => {
+                    session.rollback()
+                    n = 0
+                  }
+
+                  // In case of unique index on edges
+                  case e: ORecordDuplicatedException => {
+                    session.rollback()
+                    n = 0
+                  }
+                  // In case of concurrent modification
+                  case e: OConcurrentModificationException => {
                     session.rollback()
                   }
+                  // In case of concurrent modification
+                  case e: ODistributedRecordLockedException => {
+                    session.rollback()
+                  }
+                  
                 }
               }
             } else {

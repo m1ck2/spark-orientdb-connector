@@ -34,10 +34,6 @@ class ClassRDDPartitioner(
     val schema: OSchema = connector.getSchema(db)
     var klass: OClass = schema.getClass(mClass)
     val storage: OStorage = connector.getStorage(db)
-    //TODO: trovare matching corretto tra nodo/host e cluster
-    // val delegateFieldValues = storage.asInstanceOf[OStorageRemoteThread].getClusterConfiguration.fieldValues()(0)
-    // val nodesHost = delegateFieldValues.asInstanceOf[OTrackedList[ODocument]].map(z => (z.rawField("name"), z.rawField("listeners").asInstanceOf[OTrackedList[OTrackedMap[ODocument]]].get(0).get("listen")))
-    //println("cluster selection: " + klass.getClusterSelection.getName)
     klass.getClusterIds.zipWithIndex foreach {
       case (clusterId, index) => partitions = partitions.+=(OrientPartition(
         index,

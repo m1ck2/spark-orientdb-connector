@@ -69,7 +69,7 @@ class GraphRDDSpec extends BaseOrientDbFlatSpec {
   }
 
   "A GraphRDD obtained by traversing a graph" should "be smaller or equal to the original graph" in {
-    val subGraph = sparkContext.traverseGraph("node1", 2)
+    val subGraph = sparkContext.traverseGraph(from = "node1", depth = 2)
     val graph = sparkContext.orientGraph()
     println("sub vertici: " + subGraph.vertices.count())
     println("sub archi: " + subGraph.edges.count())
