@@ -3,31 +3,15 @@
 
 package com.metreta.spark.orientdb.connector
 
-import scala.collection.JavaConversions._
-import scala.collection.JavaConversions.collectionAsScalaIterable
-import org.apache.spark.SparkContext
-import org.apache.spark.graphx.Edge
-import org.apache.spark.graphx.Graph
-import org.apache.spark.rdd.RDD
-import com.metreta.spark.orientdb.connector.api.OrientDBConnector
-import com.metreta.spark.orientdb.connector.rdd.OrientClassRDD
-import com.metreta.spark.orientdb.connector.rdd.OrientDocument
-import com.metreta.spark.orientdb.connector.rdd.OrientDocument
-import com.metreta.spark.orientdb.connector.rdd.OrientRDD
-import com.orientechnologies.orient.core.exception.OConcurrentModificationException
-import com.orientechnologies.orient.core.id.ORID
-import com.orientechnologies.orient.core.id.ORecordId
-import com.orientechnologies.orient.core.metadata.schema.OClass
-import com.orientechnologies.orient.core.metadata.schema.OSchema
+import com.metreta.spark.orientdb.connector.rdd._
+import com.orientechnologies.orient.core.id.{ORID, ORecordId}
+import com.orientechnologies.orient.core.metadata.schema.{OClass, OSchema}
 import com.orientechnologies.orient.core.sql.OCommandSQL
 import com.tinkerpop.blueprints.impls.orient.OrientGraph
-import com.tinkerpop.blueprints.impls.orient.OrientVertex
-import com.orientechnologies.orient.core.sql.query.OSQLAsynchQuery
-import com.orientechnologies.orient.core.sql.query.OResultSet
-import com.orientechnologies.orient.core.intent.OIntentMassiveInsert
-import com.orientechnologies.common.exception.OException
-import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery
-import org.apache.spark.Logging
+import org.apache.spark.graphx.{Edge, Graph}
+import org.apache.spark.{Logging, SparkContext}
+import scala.collection.JavaConversions.{collectionAsScalaIterable, _}
+ import com.metreta.spark.orientdb.connector.api.OrientDBConnector
 
 class SparkContextFunctions(@transient val sc: SparkContext) extends Serializable with Logging{
 
@@ -43,8 +27,12 @@ class SparkContextFunctions(@transient val sc: SparkContext) extends Serializabl
    * @param connector
    * @return a classRDD
    */
-  def orientQuery(from: String, columns: String = "", where: String = "", limit: String = "", opts: String = "")(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) = new OrientClassRDD[OrientDocument](sc, connector, from, columns, where, limit, opts)
-
+  def orientQuery(from: String, columns: String = "", where: String = "", limit: String = "", opts: String = "")(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) = 
+    new OrientClassRDD[OrientDocument](sc, connector, from, columns, where, limit, opts)
+  
+  def orientDocumentQuery(from: String, where: String = "")(implicit connector: OrientDBConnector = OrientDBConnector(sc.getConf)) =
+     new ODocumentRDD(sc, connector, from, where)
+  
   /**
    * Creates a [[org.apache.spark.graphx.Graph]] starting by traversing an orientDB class.
    * @param from: orientDB class name

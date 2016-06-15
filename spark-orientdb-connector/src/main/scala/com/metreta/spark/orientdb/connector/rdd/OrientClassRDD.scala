@@ -3,36 +3,41 @@
 
 package com.metreta.spark.orientdb.connector.rdd
 
+import com.orientechnologies.orient.core.sql.query.{OResultSet, OSQLSynchQuery}
+import org.apache.spark.{SparkContext, _}
 import scala.collection.JavaConversions._
 import scala.reflect.ClassTag
-import org.apache.spark._
-import org.apache.spark.Dependency
-import org.apache.spark.Partitioner._
-import org.apache.spark.SparkContext
-import com.metreta.spark.orientdb.connector.api.OrientDBConnector
-import com.metreta.spark.orientdb.connector.rdd.partitioner.ClassRDDPartitioner
-import com.metreta.spark.orientdb.connector.rdd.partitioner.OrientPartition
-import com.orientechnologies.orient.client.remote.OServerAdmin
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx
-import com.orientechnologies.orient.core.db.record.ridbag.ORidBag
-import com.orientechnologies.orient.core.id.ORID
 import com.orientechnologies.orient.core.id.ORecordId
 import com.orientechnologies.orient.core.record.impl.ODocument
-import com.orientechnologies.orient.core.sql.query.OResultSet
-import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery
-import com.orientechnologies.orient.server.OServer
-import com.orientechnologies.orient.server.distributed.ODistributedConfiguration
-import com.orientechnologies.orient.server.hazelcast.OHazelcastPlugin
-import com.orientechnologies.orient.server.OServerMain
-import com.orientechnologies.orient.core.sql.query.OSQLAsynchQuery
-import com.metreta.spark.orientdb.connector.rdd.partitioner.PartitionName
+import com.metreta.spark.orientdb.connector.rdd.partitioner.{ClassRDDPartitioner, OrientPartition}
+import com.orientechnologies.orient.core.db.record.ridbag.ORidBag 
+ import com.metreta.spark.orientdb.connector.api.OrientDBConnector
 
 case class OrientDocumentException(message: String) extends Exception(message)
-case class OrientDocument(val oClassName: String,
-                          val oRid: String,
-                          val oColumnNames: IndexedSeq[String],
-                          val oColumnValues: IndexedSeq[Any]) extends OrientEntry(oClassName, oRid, oColumnNames, oColumnValues)
+//case class OrientDocument(oClassName: String,
+//                          oRid: String,
+//                          oColumnNames: IndexedSeq[String],
+//                          oColumnValues: IndexedSeq[Any]) extends OrientEntry(oClassName, oRid, oColumnNames, oColumnValues)
+case class OrientDocument(
+  oClassName: String,
+  oRid: String,
+  oColumnNames: IndexedSeq[String],
+  oColumnValues: IndexedSeq[Any]) extends OrientEntry(oClassName, oRid, oColumnNames, oColumnValues)
 
+object OrientDocument {
+  def fromODocument(doc: ODocument): OrientDocument =
+    OrientDocument(
+      doc.getClassName,
+      doc.getIdentity.toString(),
+      doc.fieldNames().toIndexedSeq,
+      serialize(doc.fieldValues()).toIndexedSeq)
+ 
+  private def serialize(fieldValues: Any): Array[Any] =
+    fieldValues.asInstanceOf[Array[Any]] map {
+      case z: ORidBag ⇒ z.toString()
+      case z          ⇒ z
+    }
+}
 /**
  * @author Simone Bronzin
  *
@@ -77,22 +82,31 @@ class OrientClassRDD[T] private[connector] (@transient val sc: SparkContext,
     val res: OResultSet[Any] = connector.query(session, query)
     logInfo(s"Fetching data from: $cluster")
 
-    val res2 = res.map { v =>
-      var x: ODocument = null
-      if (v.isInstanceOf[ORecordId]) {
-        x = v.asInstanceOf[ORecordId].getRecord.asInstanceOf[ODocument]
-      } else
-        x = v.asInstanceOf[ODocument]
-
-      OrientDocument(
-        x.getClassName,
-        x.getIdentity.toString(),
-        x.fieldNames().toIndexedSeq,
-        serialize(x.fieldValues()).toIndexedSeq)
-    }
-    res2.iterator
+//    val res2 = res.map { v =>
+//      var x: ODocument = null
+//      if (v.isInstanceOf[ORecordId]) {
+//        x = v.asInstanceOf[ORecordId].getRecord.asInstanceOf[ODocument]
+//      } else
+//        x = v.asInstanceOf[ODocument]
+//
+//      OrientDocument(
+//        x.getClassName,
+//        x.getIdentity.toString(),
+//        x.fieldNames().toIndexedSeq,
+//        serialize(x.fieldValues()).toIndexedSeq)
+//    }
+//    res2.iterator
+//  }
+    res.map {
+      case recordId: ORecordId ⇒
+        val doc = recordId.getRecord.asInstanceOf[ODocument]
+        OrientDocument.fromODocument(doc)
+      case doc: ODocument ⇒
+        OrientDocument.fromODocument(doc)
+   }.iterator
   }
-
+  
+  
   private def serialize(fieldValues: Any): Array[Any] =
     fieldValues.asInstanceOf[Array[Any]] map {
       case z: ORidBag => z.toString()

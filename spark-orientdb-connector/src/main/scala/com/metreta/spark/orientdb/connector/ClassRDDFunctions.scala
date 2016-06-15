@@ -17,27 +17,24 @@ import org.apache.commons.codec.binary.Base64
 import java.math.BigDecimal
 import com.orientechnologies.orient.core.record.impl.ODocument
 import org.apache.spark.TaskContext
+import com.metreta.spark.orientdb.connector.rdd.OrientDocumentException
 
 class ClassRDDFunctions[T](rdd: RDD[T]) extends Serializable with Logging {
   /**
    * Saves an instance of [[org.apache.spark.rdd.RDD RDD]] into an OrientDB class.
-   * @param myClass the OrientDB class to save in
+   * The Input class must have been created on OrientDB, the rdd must be composed by instances of a
+   * case class or of primitive objects and case class can have a number of attribute >= 0.
+   *
+   * @param orientClass
    */
-  /*
-	 * Prerequisites:
-	 *  -> Input class must have been created on OrientDB
-	 *  -> rdd must be composed by instances of a case class or of primitive objects
-	 *  -> case class can have a number of attribute >= 0
-	 */
-
-  def saveToOrient(myClass: String)(implicit connector: OrientDBConnector = OrientDBConnector(rdd.sparkContext.getConf)): Unit = {
+  def saveToOrient(orientClass: String)(implicit connector: OrientDBConnector = OrientDBConnector(rdd.sparkContext.getConf)): Unit = {
 
     rdd.foreachPartition { partition =>
       val db = connector.databaseDocumentTx()
 
       while (partition.hasNext) {
         val obj = partition.next()
-        val doc = new ODocument(myClass);
+        val doc = new ODocument(orientClass);
         setProperties("value", doc, obj)
         db.save(doc)
 
@@ -50,21 +47,25 @@ class ClassRDDFunctions[T](rdd: RDD[T]) extends Serializable with Logging {
 
   /**
    * Upserts an instance of [[org.apache.spark.rdd.RDD RDD]] into an OrientDB class.
-   * @param myClass the OrientDB class to save in
+   * @param orientClass
+   * @params keyColumns
+   * @params where
    */
 
-  def upsertToOrient(myClass: String)(implicit connector: OrientDBConnector = OrientDBConnector(rdd.sparkContext.getConf)): Unit = {
+  def upsertToOrient(orientClass: String, keyColumns: List[String], where: String = "")(implicit connector: OrientDBConnector = OrientDBConnector(rdd.sparkContext.getConf)): Unit = {
+
+    if (keyColumns.size < 1)
+      throw new OrientDocumentException(s"Please specify at leas one key column for ${orientClass} class.")
 
     rdd.foreachPartition { partition =>
       val db = connector.databaseDocumentTx()
 
       while (partition.hasNext) {
         val obj = partition.next()
-        val fromFirstField = obj.getClass().getDeclaredFields.apply(0)
-        fromFirstField.setAccessible(true)
 
-        val fromQuery = "UPDATE " + myClass + "  " + getInsertString(obj) +
-          " upsert return after @rid where " + fromFirstField.getName + " = " + fromFirstField.get(obj)
+        var fromQuery = s"UPDATE ${orientClass} ${getInsertString(obj)} upsert return after @rid where ${getUpsertWhereString(obj, keyColumns)}"
+        if (!where.isEmpty()) fromQuery = fromQuery + s" AND ${where}"
+
         try {
           db.command(new OCommandSQL(fromQuery)).execute().asInstanceOf[java.util.ArrayList[Any]]
         } catch {
@@ -97,62 +98,82 @@ class ClassRDDFunctions[T](rdd: RDD[T]) extends Serializable with Logging {
   private def getInsertString[T](obj: T): String = {
 
     var insStr = "SET"
+    if (obj != null) {
+      obj match {
+        case o: Int            => insStr = insStr + " value = " + o + ","
+        case o: Boolean        => insStr = insStr + " value = " + o + ","
+        case o: BigDecimal     => insStr = insStr + " value = " + o + ","
+        case o: Float          => insStr = insStr + " value = " + o + ","
+        case o: Double         => insStr = insStr + " value = " + o + ","
+        case o: java.util.Date => insStr = insStr + " value = date('" + orientDateFormat.format(o) + "'),"
+        case o: Short          => insStr = insStr + " value = " + o + ","
+        case o: Long           => insStr = insStr + " value = " + o + ","
+        case o: String         => insStr = insStr + " value = '" + escapeString(o) + "',"
+        case o: Array[Byte]    => insStr = insStr + " value = '" + Base64.encodeBase64String(o.asInstanceOf[Array[Byte]]) + "',"
+        case o: Byte           => insStr = insStr + " value = " + o + ","
 
-    obj match {
-      case o: Int            => insStr = insStr + " value = " + o + ","
-      case o: Boolean        => insStr = insStr + " value = " + o + ","
-      case o: BigDecimal     => insStr = insStr + " value = " + o + ","
-      case o: Float          => insStr = insStr + " value = " + o + ","
-      case o: Double         => insStr = insStr + " value = " + o + ","
-      case o: java.util.Date => insStr = insStr + " value = date('" + orientDateFormat.format(o) + "'),"
-      case o: Short          => insStr = insStr + " value = " + o + ","
-      case o: Long           => insStr = insStr + " value = " + o + ","
-      case o: String         => insStr = insStr + " value = '" + o + "',"
-      case o: Array[Byte]    => insStr = insStr + " value = '" + Base64.encodeBase64String(o.asInstanceOf[Array[Byte]]) + "',"
-      case o: Byte           => insStr = insStr + " value = " + o + ","
-      case _ => {
-        obj.getClass().getDeclaredFields.foreach {
-          case field =>
-            field.setAccessible(true)
-            insStr = insStr + " " + field.getName + " = " + buildValueByType(field.get(obj)) + ","
+        case o => {
+          obj.getClass().getDeclaredFields.foreach {
+            case field =>
+              field.setAccessible(true)
+              insStr = insStr + " " + field.getName + " = " + buildValueByType(field.get(obj)) + ","
+          }
         }
       }
     }
     insStr.dropRight(1)
   }
 
+  private def getUpsertWhereString[T](obj: T, keyColumns: List[String]): String = {
+
+    var upsStr = ""
+    for (key <- keyColumns) {
+      val field = obj.getClass().getDeclaredField(key)
+      field.setAccessible(true)
+      val value = field.get(obj)
+      upsStr = upsStr + " " + key + " = " + buildValueByType(value) + " AND"
+    }
+
+    upsStr.dropRight(3)
+  }
+
   private val orientDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
   private def buildValueByType(fieldValue: AnyRef): String = fieldValue match {
     case _: Array[Byte]      => "'" + Base64.encodeBase64String(fieldValue.asInstanceOf[Array[Byte]]) + "'" //"'" + (fieldValue.asInstanceOf[Array[Byte]]) + "'"//
-    case _: java.lang.String => "'" + fieldValue + "'"
+    case _: java.lang.String => "'" + escapeString(fieldValue.toString) + "'"
     case _: java.util.Date   => "date('" + orientDateFormat.format(fieldValue) + "')"
     case _                   => fieldValue.toString()
   }
 
   private def setProperties[T](fieldName: String, doc: ODocument, obj: T): Unit = {
-
-    obj match {
-      case o: Int            => doc.field(fieldName, o, OType.INTEGER)
-      case o: Boolean        => doc.field(fieldName, o, OType.BOOLEAN)
-      case o: BigDecimal     => doc.field(fieldName, o, OType.DECIMAL)
-      case o: Float          => doc.field(fieldName, o, OType.FLOAT)
-      case o: Double         => doc.field(fieldName, o, OType.DOUBLE)
-      case o: java.util.Date => doc.field(fieldName, orientDateFormat.format(o), OType.DATE)
-      case o: Short          => doc.field(fieldName, o, OType.SHORT)
-      case o: Long           => doc.field(fieldName, o, OType.LONG)
-      case o: String         => doc.field(fieldName, o, OType.STRING)
-      case o: Array[Byte]    => doc.field(fieldName, o, OType.BINARY) //insStr = insStr + " value = '" + Base64.encodeBase64String(o.asInstanceOf[Array[Byte]]) + "',"  
-      case o: Byte           => doc.field(fieldName, o, OType.BYTE)
-      case _ => {
-        obj.getClass().getDeclaredFields.foreach {
-          case field =>
-            field.setAccessible(true)
-            setProperties(field.getName, doc, field.get(obj))
+    if (obj != null) {
+      obj match {
+        case o: Int            => doc.field(fieldName, o, OType.INTEGER)
+        case o: Boolean        => doc.field(fieldName, o, OType.BOOLEAN)
+        case o: BigDecimal     => doc.field(fieldName, o, OType.DECIMAL)
+        case o: Float          => doc.field(fieldName, o, OType.FLOAT)
+        case o: Double         => doc.field(fieldName, o, OType.DOUBLE)
+        case o: java.util.Date => doc.field(fieldName, orientDateFormat.format(o), OType.DATE)
+        case o: Short          => doc.field(fieldName, o, OType.SHORT)
+        case o: Long           => doc.field(fieldName, o, OType.LONG)
+        case o: String         => doc.field(fieldName, o, OType.STRING)
+        case o: Array[Byte]    => doc.field(fieldName, o, OType.BINARY) //insStr = insStr + " value = '" + Base64.encodeBase64String(o.asInstanceOf[Array[Byte]]) + "',"  
+        case o: Byte           => doc.field(fieldName, o, OType.BYTE)
+        case _ => {
+          obj.getClass().getDeclaredFields.foreach {
+            case field =>
+              field.setAccessible(true)
+              setProperties(field.getName, doc, field.get(obj))
+          }
         }
       }
     }
+  }
 
+  private def escapeString(in: String): String = {
+
+    return in.replace("'", "\\'").replace("\"", "\\\"")
   }
 
 }
